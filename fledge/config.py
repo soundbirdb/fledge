@@ -1,74 +1,70 @@
-"""TOML configuration loader for fledge job queue daemon."""
+"""Configuration loading for fledge."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import List, Optional
 
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        raise ImportError(
-            "tomllib (Python 3.11+) or tomli package is required. "
-            "Install with: pip install tomli"
-        )
+import tomllib
 
 
 @dataclass
 class JobConfig:
     name: str
     command: str
-    schedule: str
+    interval_seconds: int
     enabled: bool = True
-    timeout: int = 300
-    env: dict[str, str] = field(default_factory=dict)
+    timeout_seconds: Optional[int] = None
 
     @classmethod
-    def from_dict(cls, name: str, data: dict[str, Any]) -> "JobConfig":
+    def from_dict(cls, data: dict) -> "JobConfig":
         return cls(
-            name=name,
+            name=data["name"],
             command=data["command"],
-            schedule=data["schedule"],
-            enabled=data.get("enabled", True),
-            timeout=data.get("timeout", 300),
-            env=data.get("env", {}),
+            interval_seconds=int(data["interval_seconds"]),
+            enabled=bool(data.get("enabled", True)),
+            timeout_seconds=data.get("timeout_seconds"),
+        )
+
+
+@dataclass
+class LoggingConfig:
+    level: str = "INFO"
+    log_file: Optional[str] = None
+    max_bytes: int = 10 * 1024 * 1024
+    backup_count: int = 3
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LoggingConfig":
+        return cls(
+            level=data.get("level", "INFO"),
+            log_file=data.get("log_file"),
+            max_bytes=int(data.get("max_bytes", 10 * 1024 * 1024)),
+            backup_count=int(data.get("backup_count", 3)),
         )
 
 
 @dataclass
 class FledgeConfig:
-    log_level: str = "INFO"
-    log_file: str | None = None
-    jobs: list[JobConfig] = field(default_factory=list)
+    tick_interval: float
+    jobs: List[JobConfig] = field(default_factory=list)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "FledgeConfig":
+    def from_dict(cls, data: dict) -> "FledgeConfig":
         daemon_section = data.get("daemon", {})
-        jobs_section = data.get("jobs", {})
-
-        jobs = [
-            JobConfig.from_dict(name, job_data)
-            for name, job_data in jobs_section.items()
-        ]
-
+        logging_section = data.get("logging", {})
+        jobs_section = data.get("jobs", [])
         return cls(
-            log_level=daemon_section.get("log_level", "INFO"),
-            log_file=daemon_section.get("log_file"),
-            jobs=jobs,
+            tick_interval=float(daemon_section.get("tick_interval", 1.0)),
+            jobs=[JobConfig.from_dict(j) for j in jobs_section],
+            logging=LoggingConfig.from_dict(logging_section),
         )
 
 
 def load_config(path: str | Path) -> FledgeConfig:
-    """Load and parse a fledge TOML configuration file."""
-    config_path = Path(path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    if not config_path.is_file():
-        raise ValueError(f"Config path is not a file: {config_path}")
-
-    with open(config_path, "rb") as f:
-        raw = tomllib.load(f)
-
+    """Load and parse a TOML configuration file."""
+    with open(path, "rb") as fh:
+        raw = tomllib.load(fh)
     return FledgeConfig.from_dict(raw)
