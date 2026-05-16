@@ -59,7 +59,18 @@ class Daemon:
             job = schedule.job
             logger.info("Running job '%s'", job.name)
             t0 = time.monotonic()
-            result = self._runner.run(job)
+            try:
+                result = self._runner.run(job)
+            except Exception as exc:  # noqa: BLE001
+                duration = time.monotonic() - t0
+                logger.exception(
+                    "Unhandled exception while running job '%s' after %.3fs",
+                    job.name,
+                    duration,
+                )
+                self._metrics.record(job.name, success=False, duration=duration)
+                schedule.mark_ran()
+                continue
             duration = time.monotonic() - t0
             self._metrics.record(job.name, success=result.success, duration=duration)
             schedule.mark_ran()
