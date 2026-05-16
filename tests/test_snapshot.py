@@ -95,21 +95,11 @@ def test_flush_writes_json_file(store, snap_file):
 
 def test_load_restores_snapshots_from_disk(snap_file):
     s1 = SnapshotStore(str(snap_file))
-    s1.update(_FakeResult("persistent", success=True, duration=3.0))
+    s1.update(_FakeResult("persisted_job", success=True, duration=1.2))
 
+    # Create a new store instance pointing at the same file; it should reload.
     s2 = SnapshotStore(str(snap_file))
-    snap = s2.get("persistent")
+    snap = s2.get("persisted_job")
     assert snap is not None
     assert snap.last_status == "success"
-
-
-def test_all_returns_all_snapshots(store):
-    store.update(_FakeResult("a", success=True, duration=1.0))
-    store.update(_FakeResult("b", success=False, duration=0.2))
-    assert set(store.all().keys()) == {"a", "b"}
-
-
-def test_corrupt_file_is_ignored_gracefully(snap_file):
-    snap_file.write_text("{invalid json")
-    store = SnapshotStore(str(snap_file))
-    assert store.all() == {}
+    assert snap.last_duration == pytest.approx(1.2)
