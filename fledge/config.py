@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-import tomllib
+try:
+    import tomllib
+except ImportError:  # Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]
+
+from fledge.notifier import NotifierConfig
 
 
 @dataclass
@@ -14,57 +19,66 @@ class JobConfig:
     name: str
     command: str
     interval_seconds: int
+    timeout_seconds: int = 60
     enabled: bool = True
-    timeout_seconds: Optional[int] = None
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "JobConfig":
-        return cls(
+    @staticmethod
+    def from_dict(data: dict) -> "JobConfig":
+        return JobConfig(
             name=data["name"],
             command=data["command"],
             interval_seconds=int(data["interval_seconds"]),
-            enabled=bool(data.get("enabled", True)),
-            timeout_seconds=data.get("timeout_seconds"),
+            timeout_seconds=int(data.get("timeout_seconds", 60)),
+            enabled=data.get("enabled", True),
         )
 
 
 @dataclass
 class LoggingConfig:
     level: str = "INFO"
-    log_file: Optional[str] = None
-    max_bytes: int = 10 * 1024 * 1024
-    backup_count: int = 3
+    file: Optional[str] = None
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "LoggingConfig":
-        return cls(
-            level=data.get("level", "INFO"),
-            log_file=data.get("log_file"),
-            max_bytes=int(data.get("max_bytes", 10 * 1024 * 1024)),
-            backup_count=int(data.get("backup_count", 3)),
+    @staticmethod
+    def from_dict(data: dict) -> "LoggingConfig":
+        return LoggingConfig(
+            level=data.get("level", "INFO").upper(),
+            file=data.get("file"),
+        )
+
+
+@dataclass
+class DaemonConfig:
+    tick_seconds: int = 10
+    history_file: Optional[str] = None
+
+    @staticmethod
+    def from_dict(data: dict) -> "DaemonConfig":
+        return DaemonConfig(
+            tick_seconds=int(data.get("tick_seconds", 10)),
+            history_file=data.get("history_file"),
         )
 
 
 @dataclass
 class FledgeConfig:
-    tick_interval: float
-    jobs: List[JobConfig] = field(default_factory=list)
+    daemon: DaemonConfig
+    jobs: List[JobConfig]
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "FledgeConfig":
-        daemon_section = data.get("daemon", {})
-        logging_section = data.get("logging", {})
-        jobs_section = data.get("jobs", [])
-        return cls(
-            tick_interval=float(daemon_section.get("tick_interval", 1.0)),
-            jobs=[JobConfig.from_dict(j) for j in jobs_section],
-            logging=LoggingConfig.from_dict(logging_section),
-        )
+    notifier: NotifierConfig = field(default_factory=NotifierConfig)
 
 
-def load_config(path: str | Path) -> FledgeConfig:
-    """Load and parse a TOML configuration file."""
+def load_config(path: Path) -> FledgeConfig:
     with open(path, "rb") as fh:
         raw = tomllib.load(fh)
-    return FledgeConfig.from_dict(raw)
+
+    daemon = DaemonConfig.from_dict(raw.get("daemon", {}))
+    jobs = [JobConfig.from_dict(j) for j in raw.get("jobs", [])]
+    logging_cfg = LoggingConfig.from_dict(raw.get("logging", {}))
+    notifier_cfg = NotifierConfig.from_dict(raw.get("notifier", {}))
+
+    return FledgeConfig(
+        daemon=daemon,
+        jobs=jobs,
+        logging=logging_cfg,
+        notifier=notifier_cfg,
+    )

@@ -1,30 +1,32 @@
-"""Fledge daemon — orchestrates the scheduler, runner, and history."""
+"""Fledge daemon — orchestrates scheduler, runner, history, and notifier."""
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Optional
 
 from fledge.config import FledgeConfig
-from fledge.history import HistoryEntry, JobHistory
+from fledge.history import JobHistory
 from fledge.logging_config import get_logger
+from fledge.notifier import Notifier
 from fledge.runner import JobRunner
 from fledge.scheduler import Scheduler
 
-_DEFAULT_HISTORY_PATH = "fledge_history.jsonl"
-_TICK_SECONDS = 10
+logger = get_logger(__name__)
 
 
 class Daemon:
-    def __init__(
-        self,
-        config: FledgeConfig,
-        history_path: str = _DEFAULT_HISTORY_PATH,
-    ) -> None:
+    """Main daemon process."""
+
+    def __init__(self, config: FledgeConfig) -> None:
         self._config = config
-        self._logger = get_logger()
         self._scheduler = Scheduler(config.jobs)
         self._runner = JobRunner()
+        self._notifier = Notifier(config.notifier)
+        history_path: Optional[Path] = (
+            Path(config.daemon.history_file) if config.daemon.history_file else None
+        )
         self._history = JobHistory(history_path)
         self._running = False
 
@@ -33,19 +35,21 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        self._logger.info("Fledge daemon starting.")
+        """Run the daemon loop until *stop()* is called."""
+        logger.info("Fledge daemon starting")
         self._running = True
         try:
             while self._running:
                 self._run_due_jobs()
-                time.sleep(_TICK_SECONDS)
+                time.sleep(self._config.daemon.tick_seconds)
         except KeyboardInterrupt:
-            self._logger.info("Interrupted — shutting down.")
+            logger.info("Interrupted — shutting down")
         finally:
             self._running = False
-            self._logger.info("Fledge daemon stopped.")
+            logger.info("Fledge daemon stopped")
 
     def stop(self) -> None:
+        """Signal the daemon loop to exit."""
         self._running = False
 
     # ------------------------------------------------------------------
@@ -53,18 +57,18 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def _run_due_jobs(self) -> None:
-        for job_name, schedule in self._scheduler.due_jobs():
-            self._logger.info("Running job: %s", job_name)
-            job_cfg = self._scheduler.get_job_config(job_name)
-            result = self._runner.run(job_cfg)
+        for job, schedule in self._scheduler.due_jobs():
+            logger.info("Running job '%s'", job.name)
+            result = self._runner.run(job)
             schedule.mark_ran()
-
-            entry = HistoryEntry.from_result(job_name, result)
-            self._history.record(entry)
-
+            self._history.record(result)
+            self._notifier.notify(result)
             if result.success:
-                self._logger.info("Job %s completed (rc=%d)", job_name, result.returncode)
+                logger.info("Job '%s' completed in %.2fs", job.name, result.duration_seconds)
             else:
-                self._logger.warning(
-                    "Job %s failed (rc=%d): %s", job_name, result.returncode, result.output
+                logger.error(
+                    "Job '%s' failed after %.2fs: %s",
+                    job.name,
+                    result.duration_seconds,
+                    result.error,
                 )
