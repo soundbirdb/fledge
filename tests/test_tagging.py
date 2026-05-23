@@ -82,3 +82,11 @@ class TestTagRegistry:
 
     def test_all_tags(self, registry):
         assert registry.all_tags() == {"etl", "nightly", "critical", "reporting"}
+
+    def test_register_overwrites_existing_job(self, registry):
+        """Re-registering a job should replace its tag policy."""
+        registry.register("job_a", TagPolicy(tags=["batch"]))
+        assert registry.tags_for("job_a") == ["batch"]
+        # job_a should no longer appear under its old tags
+        assert "job_a" not in registry.jobs_with_tag("etl")
+        assert "job_a" not in registry.jobs_with_tag("nightly")
