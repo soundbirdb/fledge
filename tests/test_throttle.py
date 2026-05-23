@@ -82,3 +82,12 @@ class TestThrottle:
         policy = ThrottlePolicy(min_interval=60)
         throttle.record("job_a")
         assert not throttle.is_throttled("job_b", policy)
+
+    def test_record_updates_last_run_timestamp(self, throttle):
+        """A second record() call should advance the stored timestamp."""
+        throttle.record("job_a")
+        first_ts = throttle.last_run("job_a")
+        time.sleep(0.01)
+        throttle.record("job_a")
+        second_ts = throttle.last_run("job_a")
+        assert second_ts > first_ts
